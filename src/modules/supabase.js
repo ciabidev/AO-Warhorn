@@ -1,98 +1,73 @@
-const { createClient } = require("@supabase/supabase-js");
-const {supabase_url, supabase_service_key} = require("../../config.json"); // adjust path if needed
+const { MongoClient, ServerApiVersion } = require("mongodb");
+const { mongoUri, devMode } = require("../../config.json"); // adjust path
 
+const client = new MongoClient(mongoUri, {
+  serverApi: {
+    version: ServerApiVersion.v1,
+    strict: true,
+    deprecationErrors: true,
+  },
+});
 
-if (!supabase_url || !supabase_service_key) {
-  throw new Error("Supabase config missing in config.json");
+let db;
+
+// ---------- INIT DB ----------
+async function initDb() {
+  await client.connect();
+  const mongoDbName = devMode ? "development" : "production";
+  db = client.db(mongoDbName);
 }
 
-const supabase = createClient(supabase_url, supabase_service_key);
+// ---------- COLLECTION HELPER ----------
+function getCollection(collectionName) {
+  return db.collection(collectionName);
+}
 
-module.exports = supabase;
+// ---------- GET SETTINGS ----------
+async function getSettings(guildId) {
+  const serverSettings = getCollection("serverSettings");
+  return serverSettings.findOne({ guildId });
+}
 
+// ---------- SET SETTINGS ----------
+async function setSettings(guildId, settings) {
+  const serverSettings = getCollection("serverSettings");
+
+  // Include guildId to upsert
+  const fullDocument = { guildId, ...settings };
+
+  // Upsert: replace the document if exists, insert if not
+  await serverSettings.replaceOne({ guildId }, fullDocument, { upsert: true });
+}
+
+// ---------- EXAMPLE USAGE ----------
 (async () => {
-  const { data, error } = await supabase.from("moderation_cases").select("*").limit(1);
+  await initDb(); // must call first
 
-  if (error) {
-    console.error("Supabase error:", error);
-    return;
-  }
+  // Set some settings
+  await setSettings("1000123456789012345", {
+    receivePingsFromOtherServers: true,
+    sendPingsToOtherServers: true,
+    hostRoles: ["Host", "Hosts"],
+    useCrossServerThreads: true,
+    localRegionConfig: {
+      "north-america": { channelId: "1000123456789012345", pingRoleId: "1000123456789012345" },
+      "south-america": { channelId: "1000123456789012345", pingRoleId: "1000123456789012345" },
+      europe: { channelId: "1000123456789012345", pingRoleId: "1000123456789012345" },
+      asia: { channelId: "1000123456789012345", pingRoleId: "1000123456789012345" },
+      africa: { channelId: "1000123456789012345", pingRoleId: "1000123456789012345" },
+      oceania: { channelId: "1000123456789012345", pingRoleId: "1000123456789012345" },
+    },
+  });
 
-  console.log("Supabase response:", data);
+  // Get settings
+  const settings = await getSettings("1000123456789012345");
+  console.log(settings);
 })();
 
-// example document 
-/*
-Supabase response: [
-  {
-    id: 1,
-    target_user: 1370525449775612000,
-    action: 'see',
-    reason: 'see',
-    actioned_by: 1370525449775612000,
-    duration_ms: null,
-    formatted_duration: null,
-    points_delta: null,
-    created_at: '2025-11-22T01:28:00.779377+00:00'
-  }
-]
-*/
-
-async function getUserPoints(userId) {
-  const { data, error } = await supabase.rpc("sum_points_for_user", {
-    _target_user: userId,
-  });
-  if (error) {
-    console.error("RPC error", error);
-  } else {
-    const totalPoints = data;
-    return totalPoints;
-  }
-}
-
-async function createCase(entry) {
-  const { data, error } = await supabase.from("moderation_cases").insert(entry).select().single();
-
-  if (error) {
-    console.error("Supabase createCase error:", error);
-    return null;
-  }
-
-  return data;
-}
-
-async function getCases(userId) {
-  const { data, error } = await supabase
-    .from("moderation_cases")
-    .select("*")
-    .eq("target_user", userId);
-
-  if (error) {
-    console.error("Supabase getCases error:", error);
-    return [];
-  }
-
-  return data.sort((a, b) => b.id - a.id); // newest first
-}
-
-async function getLatestCase(userId) {
-  const { data, error } = await supabase
-    .from("moderation_cases")
-    .select("*")
-    .eq("target_user", userId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-
-  if (error) {
-    console.error("Supabase getLatestCase error:", error);
-    return null;
-  }
-
-  return data[0];
-}
 module.exports = {
-  getUserPoints,
-  createCase,
-  getCases,
-  getLatestCase,
+  initDb,
+  getCollection,
+  getSettings,
+  setSettings,
 };
